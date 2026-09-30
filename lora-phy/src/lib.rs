@@ -145,7 +145,16 @@ where
 
     /// Place the LoRa physical layer in standby mode
     pub async fn enter_standby(&mut self) -> Result<(), RadioError> {
-        self.radio_kind.set_standby().await
+        self.radio_kind.set_standby().await?;
+        // [AI-GENERATED PATCH] Standby ends whatever operation was running, so its IRQ flags are
+        // stale from here on. They used to stay set: after a caller aborted `rx()` and entered
+        // standby, a leftover `RxTxTimeout` kept DIO1 high, the next `tx()` returned from
+        // `wait_for_irq()` at once and reported `TransmitTimeout` without sending anything.
+        // Clearing them here (and recording the mode, which stayed at `Receive`) gives the next
+        // operation a clean start.
+        self.radio_mode = RadioMode::Standby;
+        self.radio_kind.process_irq_event(RadioMode::Standby, None, true).await?;
+        Ok(())
     }
 
     /// Place the LoRa physical layer in low power mode, specifying cold or warm start (if the Semtech chip supports it)
