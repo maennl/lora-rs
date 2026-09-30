@@ -17,7 +17,7 @@ Je Zielversion von `lora-phy` gibt es **einen eigenen Branch**, abgezweigt vom V
 
 | Branch | Basis | Enthält |
 |---|---|---|
-| `ai/header-error-rx-ende-3.0.1` | Tag `lora-phy-v3.0.1` (`ca04c228`) | Patch 1 |
+| `ai/header-error-rx-ende-3.0.1` | Tag `lora-phy-v3.0.1` (`ca04c228`) | Patch 1, Patch 2 |
 
 `main` bleibt unverändert der Upstream-Stand und wird nicht angefasst.
 
@@ -66,3 +66,28 @@ allein trägt.
    der Fork für diese Version entfallen.
 3. Andernfalls den Patch übertragen und in beiden Konsumenten den `[patch.crates-io]`-Eintrag
    auf den neuen Branch umstellen.
+
+## Patch 2: `enter_standby()` löscht die IRQ-Flags
+
+**Stelle:** `lora-phy/src/lib.rs`, `LoRa::enter_standby`.
+
+**Änderung:** Nach `set_standby()` setzt die Funktion `radio_mode = RadioMode::Standby` und löscht
+den IRQ-Status des Chips (über `process_irq_event(…, clear_interrupts = true)`). Vorher schaltete
+sie nur den Chip um.
+
+**Ursache:** Ein Aufrufer, der `rx()` mit einer eigenen Frist abbricht, liest den IRQ-Zustand über
+die öffentliche `process_irq_event()` (die nicht löscht) und geht in den Standby. Die Flags
+`RxTxTimeout`/`HeaderError` blieben dabei stehen, und `radio_mode` blieb auf `Receive`.
+`prepare_for_tx` legt DIO1 auf `TxDone | RxTxTimeout`; das alte `RxTxTimeout` zieht DIO1 sofort
+hoch, `tx()` kehrt aus `wait_for_irq()` sofort zurück, und `process_irq_event` meldet
+`TransmitTimeout`, ohne dass etwas gesendet wurde.
+
+**Wirkung:** Nach `enter_standby()` beginnt jede Operation ohne alte Flags. Für einen Aufrufer,
+der `enter_standby()` nie benutzt, ändert sich nichts.
+
+**Beleg:** Todo #531 im ebon-Verbund. Ein Heltec-Adapter (SX1262) meldete nach jedem
+Frist-Abbruch im Empfang beim nächsten Senden `TransmitTimeout`; Kopplungs-Broadcasts gingen
+dadurch nicht in die Luft.
+
+**Beim Sprung auf eine neue Version:** Prüfen, ob `enter_standby()` upstream die Flags löscht und
+den Modus nachführt. Wenn ja, entfällt der Patch.
