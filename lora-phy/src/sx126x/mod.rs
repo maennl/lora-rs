@@ -887,6 +887,15 @@ where
             RadioMode::Receive(rx_mode) => {
                 if (irq_flags & IrqMask::HeaderError.value()) == IrqMask::HeaderError.value() {
                     debug!("HeaderError in radio mode {}", radio_mode);
+                    // [AI-GENERATED PATCH] A header error ends a single/duty-cycle reception. `do_rx` sets
+                    // `SetStopRxTimerOnPreamble`, so once a preamble was detected no symbol
+                    // timeout follows; treating the header error as "keep waiting" left `rx()`
+                    // awaiting a DIO1 edge that never came. Semtech's reference driver
+                    // (LoRaMac-node) likewise ends the reception here. The flags were cleared
+                    // above, and `rx()` puts the radio into standby on this error.
+                    if rx_mode != RxMode::Continuous {
+                        return Err(RadioError::ReceiveTimeout);
+                    }
                 }
                 if (irq_flags & IrqMask::CRCError.value()) == IrqMask::CRCError.value() {
                     debug!("CRCError in radio mode {}", radio_mode);
